@@ -3,7 +3,6 @@
 #[derive(Debug)]
 pub enum Item {
     Header(Header),
-    Label(Label),
     Paragraph(Paragraph),
     Theorem(Theorem),
 }
@@ -26,11 +25,6 @@ pub struct Header {
 }
 
 #[derive(Debug)]
-pub struct Label {
-    pub name: String,
-}
-
-#[derive(Debug)]
 pub enum Paragraph {
     Text(Vec<Span>),
     DisplayMath(Mathematics),
@@ -45,6 +39,11 @@ pub enum Span {
     Uses(Uses),
     LeanOk,
     InlineMath(Mathematics),
+}
+
+#[derive(Debug)]
+pub struct Label {
+    pub name: String,
 }
 
 #[derive(Debug)]

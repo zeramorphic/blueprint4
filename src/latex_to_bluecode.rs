@@ -61,8 +61,7 @@ fn parse_item(
     iter: &mut Peekable<impl Iterator<Item = (SourceSpan, TokenBlock)>>,
 ) -> Result<Item, Vec<ConvertError>> {
     match iter.peek() {
-        Some((span, TokenBlock::Named(name))) => {
-            let span = *span;
+        Some((_, TokenBlock::Named(name))) => {
             let name = name.clone();
             iter.next();
             match name.as_str() {
@@ -94,13 +93,7 @@ fn parse_item(
                     name: consume_arg(iter)?,
                     level: 5,
                 })),
-                "label" => Ok(Item::Label(Label {
-                    name: consume_arg(iter)?,
-                })),
-                _ => Err(vec![ConvertError::UnknownCommand {
-                    src: NamedSource::new(src_name, src.to_owned()),
-                    span,
-                }]),
+                _ => parse_paragraph(src, src_name, iter).map(Item::Paragraph),
             }
         }
         Some((
@@ -128,8 +121,7 @@ fn parse_item(
                 _ => unreachable!(),
             }
         }
-        Some((_, TokenBlock::Char(_))) => parse_paragraph(src, src_name, iter).map(Item::Paragraph),
-        unknown => todo!("{unknown:?}"),
+        _ => parse_paragraph(src, src_name, iter).map(Item::Paragraph),
     }
 }
 
@@ -281,7 +273,6 @@ fn parse_text_span(
                     .find(|(accent, _)| accent.to_string() == *name)
                 {
                     iter.next();
-                    string.push(*combining_character);
                     match iter.next() {
                         Some((_, TokenBlock::Char(c))) => {
                             string.push(c);
@@ -291,6 +282,9 @@ fn parse_text_span(
                         }
                         _ => todo!(),
                     }
+                    string.push(*combining_character);
+                } else {
+                    break;
                 }
             }
             Some((_, TokenBlock::Symbol(symbol))) => {
@@ -298,7 +292,6 @@ fn parse_text_span(
                     accents.iter().find(|(accent, _)| accent == symbol)
                 {
                     iter.next();
-                    string.push(*combining_character);
                     match iter.next() {
                         Some((_, TokenBlock::Char(c))) => {
                             string.push(c);
@@ -308,6 +301,9 @@ fn parse_text_span(
                         }
                         _ => todo!(),
                     }
+                    string.push(*combining_character);
+                } else {
+                    break;
                 }
             }
             Some((_, TokenBlock::Char('\n'))) => {
@@ -321,7 +317,7 @@ fn parse_text_span(
             _ => break,
         }
     }
-    Ok(string.trim().to_owned())
+    Ok(string.trim_matches(&['\r', '\n']).to_owned())
 }
 
 /// Parse this iterator to its end, turning it into a list of paragraphs.
