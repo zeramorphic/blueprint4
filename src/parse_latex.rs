@@ -4,10 +4,10 @@ use miette::{Diagnostic, NamedSource, SourceOffset, SourceSpan};
 use thiserror::Error;
 
 pub fn parse_latex(
-    src: String,
-    src_name: String,
+    src: &str,
+    src_name: &str,
 ) -> Result<Vec<(SourceSpan, TokenBlock)>, Vec<ParseError>> {
-    let (tokens, errors) = tokenise(src, src_name);
+    let (tokens, errors) = tokenise(src.to_owned(), src_name.to_owned());
 
     if errors.is_empty() {
         match to_trees(tokens).and_then(to_blocks) {
@@ -219,6 +219,7 @@ pub enum TokenBlock {
     Environment {
         begin_span: SourceSpan,
         end_span: SourceSpan,
+        environment_span: SourceSpan,
         environment: String,
         body: Vec<(SourceSpan, TokenBlock)>,
     },
@@ -281,7 +282,9 @@ enum PartialEnvironment {
 /// This is either an environment or a math mode block.
 struct PartialBlock {
     /// The span of the `\begin` or `$`/`$$`/`\(`/`\[` token.
-    span: SourceSpan,
+    begin_span: SourceSpan,
+    /// The span of the environment name.
+    environment_span: SourceSpan,
     /// The name of the environment.
     environment: PartialEnvironment,
     contents: Vec<(SourceSpan, TokenBlock)>,
@@ -300,7 +303,8 @@ impl BlockStack {
     fn new() -> Self {
         Self {
             stack: vec![PartialBlock {
-                span: 0.into(),
+                begin_span: 0.into(),
+                environment_span: 0.into(),
                 environment: PartialEnvironment::Environment("<document>".to_owned()),
                 contents: Vec::new(),
             }],
@@ -325,21 +329,31 @@ impl BlockStack {
         iter: &mut impl Iterator<Item = (SourceSpan, TokenTree)>,
     ) -> Result<(), ParseError> {
         match iter.next() {
-            Some((_, TokenTree::Block(contents))) => {
+            Some((environment_span, TokenTree::Block(contents))) => {
                 let environment = contents
                     .iter()
                     .map(|(_, tree)| tree.to_string())
                     .collect::<String>();
-                self.begin(span, PartialEnvironment::Environment(environment));
+                self.begin(
+                    span,
+                    environment_span,
+                    PartialEnvironment::Environment(environment),
+                );
                 Ok(())
             }
             _ => Err(ParseError::ExpectedEnvironmentBegin),
         }
     }
 
-    fn begin(&mut self, span: SourceSpan, environment: PartialEnvironment) {
+    fn begin(
+        &mut self,
+        begin_span: SourceSpan,
+        environment_span: SourceSpan,
+        environment: PartialEnvironment,
+    ) {
         self.stack.push(PartialBlock {
-            span,
+            begin_span,
+            environment_span,
             environment,
             contents: Vec::new(),
         });
@@ -375,12 +389,13 @@ impl BlockStack {
     fn end(&mut self, partial_block: PartialBlock, end_span: SourceSpan, environment: String) {
         self.push(
             SourceSpan::new(
-                partial_block.span.offset().into(),
-                (end_span.offset() + end_span.len() - partial_block.span.offset()).into(),
+                partial_block.begin_span.offset().into(),
+                (end_span.offset() + end_span.len() - partial_block.begin_span.offset()).into(),
             ),
             TokenBlock::Environment {
-                begin_span: partial_block.span,
+                begin_span: partial_block.begin_span,
                 end_span,
+                environment_span: partial_block.environment_span,
                 environment,
                 body: partial_block.contents,
             },
@@ -400,8 +415,8 @@ impl BlockStack {
 
         self.push(
             SourceSpan::new(
-                partial_block.span.offset().into(),
-                (end_span.offset() + end_span.len() - partial_block.span.offset()).into(),
+                partial_block.begin_span.offset().into(),
+                (end_span.offset() + end_span.len() - partial_block.begin_span.offset()).into(),
             ),
             TokenBlock::Mathematics {
                 display,
@@ -452,6 +467,7 @@ fn to_blocks(
                         iter.next();
                         stack.begin(
                             SourceSpan::new(span.offset().into(), 2.into()),
+                            SourceSpan::new(span.offset().into(), 2.into()),
                             PartialEnvironment::MathMode {
                                 display: true,
                                 dollars: true,
@@ -459,6 +475,7 @@ fn to_blocks(
                         );
                     } else {
                         stack.begin(
+                            span,
                             span,
                             PartialEnvironment::MathMode {
                                 display: false,
@@ -471,6 +488,7 @@ fn to_blocks(
             TokenTree::Symbol('[') => {
                 stack.begin(
                     span,
+                    span,
                     PartialEnvironment::MathMode {
                         display: true,
                         dollars: false,
@@ -479,6 +497,7 @@ fn to_blocks(
             }
             TokenTree::Symbol('(') => {
                 stack.begin(
+                    span,
                     span,
                     PartialEnvironment::MathMode {
                         display: true,
@@ -528,7 +547,7 @@ fn to_blocks(
 
 /// Wraps math-mode environments like `align` or `multline` in a display-math block.
 fn wrap_math_environments(block: TokenBlock) -> TokenBlock {
-    // The following list is taken from <https://docs.mathjax.org/en/v2.7-latest/tex.html>.
+    // The following list is taken from <https://docs.mathjax.org/en/latest/input/tex/macros/index.html#environments>.
     let math_mode_environments = [
         "align",
         "align*",
@@ -537,26 +556,63 @@ fn wrap_math_environments(block: TokenBlock) -> TokenBlock {
         "aligned",
         "alignedat",
         "array",
-        "Bmatrix",
         "bmatrix",
+        "Bmatrix",
+        "bmatrix*",
+        "Bmatrix*",
+        "bsmallmatrix",
+        "Bsmallmatrix",
+        "bsmallmatrix*",
         "cases",
+        "cases*",
         "CD",
+        "crampedsubarray",
+        "dcases",
+        "dcases*",
+        "drcases",
+        "drcases*",
+        "empheq",
         "eqnarray",
         "eqnarray*",
         "equation",
         "equation*",
+        "flalign",
+        "flalign*",
         "gather",
         "gather*",
         "gathered",
+        "lgathered",
         "matrix",
+        "matrix*",
         "multline",
         "multline*",
+        "multlined",
+        "numcases",
         "pmatrix",
+        "pmatrix*",
+        "prooftree",
+        "psmallmatrix",
+        "psmallmatrix*",
+        "rcases",
+        "rcases*",
+        "rgathered",
         "smallmatrix",
+        "smallmatrix*",
         "split",
+        "spreadlines",
         "subarray",
-        "Vmatrix",
+        "subnumcases",
         "vmatrix",
+        "Vmatrix",
+        "vmatrix*",
+        "Vmatrix*",
+        "vsmallmatrix",
+        "Vsmallmatrix",
+        "vsmallmatrix*",
+        "Vsmallmatrix*",
+        "xalignat",
+        "xalignat*",
+        "xxalignat",
     ];
 
     match block {
@@ -568,6 +624,7 @@ fn wrap_math_environments(block: TokenBlock) -> TokenBlock {
         ),
         TokenBlock::Environment {
             begin_span,
+            environment_span,
             end_span,
             environment,
             body,
@@ -582,6 +639,7 @@ fn wrap_math_environments(block: TokenBlock) -> TokenBlock {
                         ),
                         TokenBlock::Environment {
                             begin_span,
+                            environment_span,
                             end_span,
                             environment,
                             body,
@@ -591,6 +649,7 @@ fn wrap_math_environments(block: TokenBlock) -> TokenBlock {
             } else {
                 TokenBlock::Environment {
                     begin_span,
+                    environment_span,
                     end_span,
                     environment,
                     body: body
