@@ -1,6 +1,6 @@
 use std::{
     collections::{btree_map::Entry, BTreeMap, BTreeSet, VecDeque},
-    fmt::Debug,
+    fmt::{Debug, Display},
 };
 
 use miette::{Diagnostic, NamedSource, SourceSpan};
@@ -20,12 +20,13 @@ pub fn expand_latex(
 
 #[derive(Error, Debug, Diagnostic)]
 pub enum ExpandError {
-    #[error("unknown command")]
+    #[error("unknown command (current mode is {mode})")]
     UnknownCommand {
         #[source_code]
         src: NamedSource,
         #[label("unknown command found here")]
         span: SourceSpan,
+        mode: Mode,
     },
     #[error("star not allowed")]
     StarNotAllowed,
@@ -43,6 +44,10 @@ pub enum ExpandError {
     InvalidNumberOfParameters,
     #[error("not enough parameters for this default argument")]
     NotEnoughParameters,
+    #[error("mismatched math mode delimiters")]
+    MismatchedMathDelimiters,
+    #[error("cannot apply diacritic")]
+    CannotApplyDiacritic,
 }
 
 #[derive(Debug)]
@@ -50,6 +55,7 @@ struct State<'a> {
     src: &'a str,
     src_name: &'a str,
     commands: &'a mut DefinedCommands,
+    mode: Mode,
     input: VecDeque<(SourceSpan, TokenTree)>,
     output: Vec<(SourceSpan, TokenTree)>,
 }
@@ -139,6 +145,84 @@ impl Default for DefinedCommands {
                 CommandAction::DeclareMathOperator,
             )
             .unwrap();
+
+        output
+            .new_command(
+                NewCommandBehaviour::New,
+                "(".to_owned(),
+                CallingConvention::no_args(),
+                CommandAction::MathMode {
+                    enable: true,
+                    display: false,
+                },
+            )
+            .unwrap();
+        output
+            .new_command(
+                NewCommandBehaviour::New,
+                "[".to_owned(),
+                CallingConvention::no_args(),
+                CommandAction::MathMode {
+                    enable: true,
+                    display: true,
+                },
+            )
+            .unwrap();
+        output
+            .new_command(
+                NewCommandBehaviour::New,
+                ")".to_owned(),
+                CallingConvention::no_args(),
+                CommandAction::MathMode {
+                    enable: false,
+                    display: false,
+                },
+            )
+            .unwrap();
+        output
+            .new_command(
+                NewCommandBehaviour::New,
+                "]".to_owned(),
+                CallingConvention::no_args(),
+                CommandAction::MathMode {
+                    enable: false,
+                    display: true,
+                },
+            )
+            .unwrap();
+
+        // Map each LaTeX diacritic symbol to the corresponding Unicode combining character.
+        let accents = [
+            ('`', '\u{300}'),
+            ('\'', '\u{301}'),
+            ('^', '\u{302}'),
+            ('~', '\u{303}'),
+            ('=', '\u{304}'),
+            ('u', '\u{306}'),
+            ('.', '\u{307}'),
+            ('"', '\u{308}'),
+            ('H', '\u{30b}'),
+            ('v', '\u{30c}'),
+            ('d', '\u{323}'),
+            ('c', '\u{327}'),
+            ('k', '\u{328}'),
+            ('b', '\u{331}'),
+            ('t', '\u{361}'),
+        ];
+        for (diacritic, replacement) in accents {
+            output
+                .new_command(
+                    NewCommandBehaviour::New,
+                    diacritic.to_string(),
+                    CallingConvention {
+                        star: false,
+                        params: vec![Parameter::Mandatory],
+                    },
+                    CommandAction::CombiningCharacter(replacement),
+                )
+                .unwrap();
+        }
+
         output
     }
 }
@@ -201,6 +285,15 @@ struct CallingConvention {
     params: Vec<Parameter>,
 }
 
+impl CallingConvention {
+    pub fn no_args() -> Self {
+        Self {
+            star: false,
+            params: Vec::new(),
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 enum Parameter {
     Mandatory,
@@ -233,7 +326,32 @@ enum CommandAction {
     NewCommand(NewCommandBehaviour),
     DeclareMathOperator,
     MathOperator { limits: bool, body: Vec<TokenTree> },
+    CombiningCharacter(char),
+    MathMode { enable: bool, display: bool },
     UserDefined { body: Vec<TokenTree> },
+}
+
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
+pub enum Mode {
+    Text,
+    Math {
+        /// True if this block was delimited by `$$` or `\[` and `\]`;
+        /// false if this block was delimited by `$` or `\(` and `/)`.
+        display: bool,
+        /// True if this block was delimited by `$` or `$$`;
+        /// false if this block was delimited by LaTeX-style `\(` or `\[`.
+        dollars: bool,
+    },
+}
+
+impl Display for Mode {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Mode::Text => write!(f, "text mode"),
+            Mode::Math { display: true, .. } => write!(f, "display math mode"),
+            Mode::Math { display: false, .. } => write!(f, "inline math mode"),
+        }
+    }
 }
 
 impl<'a> State<'a> {
@@ -247,9 +365,25 @@ impl<'a> State<'a> {
             src,
             src_name,
             commands,
+            mode: Mode::Text,
             input,
             output: Vec::new(),
         }
+    }
+
+    fn process_inner(
+        &mut self,
+        input: VecDeque<(SourceSpan, TokenTree)>,
+    ) -> Result<Vec<(SourceSpan, TokenTree)>, Vec<ExpandError>> {
+        let inner = State {
+            src: self.src,
+            src_name: self.src_name,
+            commands: self.commands,
+            mode: self.mode,
+            input,
+            output: Vec::new(),
+        };
+        inner.process_all()
     }
 
     fn src(&self) -> NamedSource {
@@ -279,46 +413,124 @@ impl<'a> State<'a> {
     fn process_input(&mut self, span: SourceSpan, tree: TokenTree) -> Result<(), Vec<ExpandError>> {
         match tree {
             TokenTree::Named(name) => {
-                if self.commands.ignore_text_mode.contains(&name)
-                    || self.commands.ignore_math_mode.contains(&name)
-                {
-                    self.output.push((span, TokenTree::Named(name)));
-                    Ok(())
-                } else {
-                    match self.commands.commands.get(&name) {
-                        Some(command) => {
-                            let command = command.clone();
-                            let args = self
-                                .process_calling_convention(span, command.call_conv)
-                                .map_err(|err| vec![err])?;
-                            self.execute(span, args, command.action)
-                                .map_err(|err| vec![err])
+                match self.mode {
+                    Mode::Text => {
+                        if self.commands.ignore_text_mode.contains(&name) {
+                            self.output.push((span, TokenTree::Named(name)));
+                            return Ok(());
                         }
-                        None => Err(vec![ExpandError::UnknownCommand {
-                            src: self.src(),
-                            span,
-                        }]),
                     }
+                    Mode::Math { .. } => {
+                        if self.commands.ignore_math_mode.contains(&name) {
+                            self.output.push((span, TokenTree::Named(name)));
+                            return Ok(());
+                        }
+                    }
+                }
+
+                match self.commands.commands.get(&name) {
+                    Some(command) => {
+                        let command = command.clone();
+                        let args = self
+                            .process_calling_convention(span, command.call_conv)
+                            .map_err(|err| vec![err])?;
+                        self.execute(span, args, command.action)
+                    }
+                    None => Err(vec![ExpandError::UnknownCommand {
+                        src: self.src(),
+                        span,
+                        mode: self.mode,
+                    }]),
                 }
             }
             TokenTree::Symbol(symbol) => {
-                // TODO: implement symbols
-                self.output.push((span, TokenTree::Char(symbol)));
-                Ok(())
+                let name = symbol.to_string();
+
+                match self.mode {
+                    Mode::Text => {
+                        if self.commands.ignore_text_mode.contains(&name) {
+                            self.output.push((span, TokenTree::Named(name)));
+                            return Ok(());
+                        }
+                    }
+                    Mode::Math { .. } => {
+                        if self.commands.ignore_math_mode.contains(&name) {
+                            self.output.push((span, TokenTree::Named(name)));
+                            return Ok(());
+                        }
+                    }
+                }
+
+                match self.commands.commands.get(&name) {
+                    Some(command) => {
+                        let command = command.clone();
+                        let args = self
+                            .process_calling_convention(span, command.call_conv)
+                            .map_err(|err| vec![err])?;
+                        self.execute(span, args, command.action)
+                    }
+                    None => Err(vec![ExpandError::UnknownCommand {
+                        src: self.src(),
+                        span,
+                        mode: self.mode,
+                    }]),
+                }
             }
             TokenTree::Char(c) => {
-                // Print this character to the output verbatim.
-                self.output.push((span, TokenTree::Char(c)));
-                Ok(())
+                match c {
+                    '$' => {
+                        // Enable or disable math mode.
+                        if matches!(self.input.front(), Some((_, TokenTree::Char('$')))) {
+                            match self.mode {
+                                Mode::Text => {
+                                    self.mode = Mode::Math {
+                                        display: true,
+                                        dollars: true,
+                                    };
+                                    Ok(())
+                                }
+                                Mode::Math {
+                                    display: true,
+                                    dollars: true,
+                                } => {
+                                    self.mode = Mode::Text;
+                                    Ok(())
+                                }
+                                Mode::Math { .. } => {
+                                    Err(vec![ExpandError::MismatchedMathDelimiters])
+                                }
+                            }
+                        } else {
+                            match self.mode {
+                                Mode::Text => {
+                                    self.mode = Mode::Math {
+                                        display: true,
+                                        dollars: false,
+                                    };
+                                    Ok(())
+                                }
+                                Mode::Math {
+                                    display: true,
+                                    dollars: false,
+                                } => {
+                                    self.mode = Mode::Text;
+                                    Ok(())
+                                }
+                                Mode::Math { .. } => {
+                                    Err(vec![ExpandError::MismatchedMathDelimiters])
+                                }
+                            }
+                        }
+                    }
+                    _ => {
+                        // Print this character to the output verbatim.
+                        self.output.push((span, TokenTree::Char(c)));
+                        Ok(())
+                    }
+                }
             }
             TokenTree::Block(trees) => {
-                let inner = State::new(
-                    self.src,
-                    self.src_name,
-                    self.commands,
-                    VecDeque::from(trees),
-                );
-                let result = inner.process_all()?;
+                let result = self.process_inner(trees.into())?;
                 self.output.push((span, TokenTree::Block(result)));
                 Ok(())
             }
@@ -402,10 +614,14 @@ impl<'a> State<'a> {
         span: SourceSpan,
         args: Arguments,
         action: CommandAction,
-    ) -> Result<(), ExpandError> {
+    ) -> Result<(), Vec<ExpandError>> {
         match action {
-            CommandAction::NewCommand(behaviour) => self.process_newcommand(behaviour, args),
-            CommandAction::DeclareMathOperator => self.process_declare_math_operator(args),
+            CommandAction::NewCommand(behaviour) => self
+                .process_newcommand(behaviour, args)
+                .map_err(|err| vec![err]),
+            CommandAction::DeclareMathOperator => self
+                .process_declare_math_operator(args)
+                .map_err(|err| vec![err]),
             CommandAction::MathOperator { limits, body } => {
                 if limits {
                     self.output
@@ -420,7 +636,15 @@ impl<'a> State<'a> {
                 ));
                 Ok(())
             }
-            CommandAction::UserDefined { body } => self.process_user_macro(span, body, args),
+            CommandAction::CombiningCharacter(combining_character) => {
+                self.process_combining_character(span, args, combining_character)
+            }
+            CommandAction::MathMode { enable, display } => self
+                .process_math_mode(enable, display)
+                .map_err(|err| vec![err]),
+            CommandAction::UserDefined { body } => self
+                .process_user_macro(span, body, args)
+                .map_err(|err| vec![err]),
         }
     }
 
@@ -501,15 +725,71 @@ impl<'a> State<'a> {
         self.commands.new_command(
             NewCommandBehaviour::New,
             name,
-            CallingConvention {
-                star: false,
-                params: Vec::new(),
-            },
+            CallingConvention::no_args(),
             CommandAction::MathOperator {
                 limits: star,
                 body: body.into_iter().map(|(_, tree)| tree).collect(),
             },
         )
+    }
+
+    fn process_combining_character(
+        &mut self,
+        span: SourceSpan,
+        args: Arguments,
+        combining_character: char,
+    ) -> Result<(), Vec<ExpandError>> {
+        let (_, [body]) = args.into_array().map_err(|err| vec![err])?;
+        let processed_body = self.process_inner(body.into())?;
+
+        if processed_body
+            .iter()
+            .any(|(_, tree)| !matches!(tree, TokenTree::Char(_)))
+        {
+            return Err(vec![ExpandError::CannotApplyDiacritic]);
+        }
+
+        let result = processed_body
+            .iter()
+            .flat_map(|(_, tree)| tree.to_string().chars().collect::<Vec<char>>());
+
+        self.output.extend(
+            result
+                .chain(std::iter::once(combining_character))
+                .map(|c| (span, TokenTree::Char(c))),
+        );
+
+        Ok(())
+    }
+
+    fn process_math_mode(&mut self, enable: bool, display: bool) -> Result<(), ExpandError> {
+        match enable {
+            true => match self.mode {
+                Mode::Text => {
+                    self.mode = Mode::Math {
+                        display,
+                        dollars: false,
+                    };
+                    Ok(())
+                }
+                Mode::Math { .. } => Err(ExpandError::MismatchedMathDelimiters),
+            },
+            false => match self.mode {
+                Mode::Text => Err(ExpandError::MismatchedMathDelimiters),
+                Mode::Math {
+                    display: current_display,
+                    dollars: false,
+                } => {
+                    if current_display == display {
+                        self.mode = Mode::Text;
+                        Ok(())
+                    } else {
+                        Err(ExpandError::MismatchedMathDelimiters)
+                    }
+                }
+                Mode::Math { dollars: true, .. } => Err(ExpandError::MismatchedMathDelimiters),
+            },
+        }
     }
 
     fn process_user_macro(
@@ -546,6 +826,16 @@ impl<'a> State<'a> {
                     }
                     _ => todo!(),
                 },
+                TokenTree::Block(block) => output.push(TokenTree::Block(
+                    self.replace_parameters(
+                        span,
+                        block.into_iter().map(|(_, tree)| tree).collect(),
+                        args,
+                    )?
+                    .into_iter()
+                    .map(|tree| (span, tree))
+                    .collect(),
+                )),
                 _ => output.push(tree),
             }
         }

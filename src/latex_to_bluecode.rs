@@ -253,67 +253,9 @@ fn parse_paragraph(
 fn parse_text_span(
     iter: &mut Peekable<impl Iterator<Item = (SourceSpan, TokenBlock)>>,
 ) -> Result<String, Vec<ConvertError>> {
-    // Maps each LaTeX diacritic symbol to the corresponding Unicode combining character.
-    let accents = [
-        ('`', '\u{300}'),
-        ('\'', '\u{301}'),
-        ('^', '\u{302}'),
-        ('~', '\u{303}'),
-        ('=', '\u{304}'),
-        ('u', '\u{306}'),
-        ('.', '\u{307}'),
-        ('"', '\u{308}'),
-        ('H', '\u{30b}'),
-        ('v', '\u{30c}'),
-        ('d', '\u{323}'),
-        ('c', '\u{327}'),
-        ('k', '\u{328}'),
-        ('b', '\u{331}'),
-        ('t', '\u{361}'),
-    ];
-
     let mut string = String::new();
     loop {
         match iter.peek() {
-            Some((_, TokenBlock::Named(name))) => {
-                if let Some((_, combining_character)) = accents
-                    .iter()
-                    .find(|(accent, _)| accent.to_string() == *name)
-                {
-                    iter.next();
-                    match iter.next() {
-                        Some((_, TokenBlock::Char(c))) => {
-                            string.push(c);
-                        }
-                        Some((_, TokenBlock::Block(block))) => {
-                            string += &parse_text_span(&mut block.into_iter().peekable())?;
-                        }
-                        _ => todo!(),
-                    }
-                    string.push(*combining_character);
-                } else {
-                    break;
-                }
-            }
-            Some((_, TokenBlock::Symbol(symbol))) => {
-                if let Some((_, combining_character)) =
-                    accents.iter().find(|(accent, _)| accent == symbol)
-                {
-                    iter.next();
-                    match iter.next() {
-                        Some((_, TokenBlock::Char(c))) => {
-                            string.push(c);
-                        }
-                        Some((_, TokenBlock::Block(block))) => {
-                            string += &parse_text_span(&mut block.into_iter().peekable())?;
-                        }
-                        _ => todo!(),
-                    }
-                    string.push(*combining_character);
-                } else {
-                    break;
-                }
-            }
             Some((_, TokenBlock::Char('\n'))) => {
                 iter.next();
                 break;
