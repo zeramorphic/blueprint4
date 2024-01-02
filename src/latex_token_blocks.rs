@@ -1,6 +1,6 @@
 use std::fmt::Display;
 
-use miette::{Diagnostic, SourceSpan};
+use miette::{Diagnostic, NamedSource, SourceSpan};
 use thiserror::Error;
 
 use crate::{parse_latex::TokenTree, resource};
@@ -16,8 +16,8 @@ pub enum TokenBlock {
     Block(Vec<(SourceSpan, TokenBlock)>),
     /// Some tokens to be rendered in math mode.
     Mathematics {
-        /// True if this block was delimited by `$$` or `\[` and `\]`;
-        /// false if this block was delimited by `$` or `\(` and `/)`.
+        /// True if this block was delimited by `\[` and `\]`;
+        /// false if this block was delimited by `\(` and `/)`.
         display: bool,
         /// The raw contents of the mathematics, with comments removed.
         contents: Vec<(SourceSpan, TokenBlock)>,
@@ -81,13 +81,20 @@ pub enum BlockError {
     #[error("expected environment name after \\end")]
     ExpectedEnvironmentEnd,
     #[error("found \\begin and \\end with mismatched environments")]
-    MismatchedEnvironments,
+    MismatchedBeginEnd,
     #[error("unmatched \\begin")]
     UnmatchedBegin,
     #[error("unmatched \\end")]
     UnmatchedEnd,
     #[error("mismatched math mode delimiters")]
-    MismatchedMathDelimiters,
+    MismatchedMathDelimiters {
+        #[source_code]
+        src: NamedSource,
+        #[label("previous environment began here")]
+        open: SourceSpan,
+        #[label("ended math mode here")]
+        close: SourceSpan,
+    },
 }
 
 #[derive(PartialEq, Eq)]
@@ -96,15 +103,13 @@ enum PartialEnvironment {
     MathMode {
         /// True if we're in display math mode.
         display: bool,
-        /// True if we're using `$`/`$$` instead of `\(\)`/`\[\]`.
-        dollars: bool,
     },
 }
 
 /// A block under construction.
 /// This is either an environment or a math mode block.
 struct PartialBlock {
-    /// The span of the `\begin` or `$`/`$$`/`\(`/`\[` token.
+    /// The span of the `\begin` or `\(`/`\[` token.
     begin_span: SourceSpan,
     /// The span of the environment name.
     environment_span: SourceSpan,
@@ -199,7 +204,7 @@ impl BlockStack {
                 } else if PartialEnvironment::Environment(expected_env_name.clone())
                     != partial_block.environment
                 {
-                    Err(BlockError::MismatchedEnvironments)
+                    Err(BlockError::MismatchedBeginEnd)
                 } else {
                     self.end(partial_block, span, expected_env_name);
                     Ok(())
@@ -251,8 +256,8 @@ impl BlockStack {
 }
 
 pub fn trees_to_blocks(
-    _src: &str,
-    _src_name: &str,
+    src: &str,
+    src_name: &str,
     token_trees: Vec<(SourceSpan, TokenTree)>,
 ) -> Result<Vec<(SourceSpan, TokenBlock)>, BlockError> {
     let mut stack = BlockStack::new();
@@ -269,89 +274,50 @@ pub fn trees_to_blocks(
                     stack.push(span, TokenBlock::Named(name));
                 }
             }
-            TokenTree::Char('$') => {
-                if let PartialEnvironment::MathMode { display, dollars } =
-                    stack.stack.last().unwrap().environment
-                {
-                    // End a math mode block.
-                    if let Some((_, TokenTree::Char('$'))) = iter.peek() {
-                        iter.next();
-                        if !display || !dollars {
-                            return Err(BlockError::MismatchedMathDelimiters);
-                        }
-                        stack.end_math(span)?;
-                    } else {
-                        if display || !dollars {
-                            return Err(BlockError::MismatchedMathDelimiters);
-                        }
-                        stack.end_math(span)?;
-                    }
-                } else {
-                    // Start a math mode block.
-                    if let Some((_, TokenTree::Char('$'))) = iter.peek() {
-                        iter.next();
-                        stack.begin(
-                            SourceSpan::new(span.offset().into(), 2.into()),
-                            SourceSpan::new(span.offset().into(), 2.into()),
-                            PartialEnvironment::MathMode {
-                                display: true,
-                                dollars: true,
-                            },
-                        );
-                    } else {
-                        stack.begin(
-                            span,
-                            span,
-                            PartialEnvironment::MathMode {
-                                display: false,
-                                dollars: true,
-                            },
-                        );
-                    }
-                }
-            }
             TokenTree::Symbol('[') => {
-                stack.begin(
-                    span,
-                    span,
-                    PartialEnvironment::MathMode {
-                        display: true,
-                        dollars: false,
-                    },
-                );
+                stack.begin(span, span, PartialEnvironment::MathMode { display: true });
             }
             TokenTree::Symbol('(') => {
-                stack.begin(
-                    span,
-                    span,
-                    PartialEnvironment::MathMode {
-                        display: true,
-                        dollars: false,
-                    },
-                );
+                stack.begin(span, span, PartialEnvironment::MathMode { display: false });
             }
             TokenTree::Symbol(']') => {
-                if let PartialEnvironment::MathMode { display, dollars } =
+                if let PartialEnvironment::MathMode { display } =
                     stack.stack.last().unwrap().environment
                 {
-                    if !display || dollars {
-                        return Err(BlockError::MismatchedMathDelimiters);
+                    if !display {
+                        return Err(BlockError::MismatchedMathDelimiters {
+                            src: NamedSource::new(src_name, src.to_owned()),
+                            open: stack.stack.last().unwrap().begin_span,
+                            close: span,
+                        });
                     }
                     stack.end_math(span)?;
                 } else {
-                    return Err(BlockError::MismatchedMathDelimiters);
+                    return Err(BlockError::MismatchedMathDelimiters {
+                        src: NamedSource::new(src_name, src.to_owned()),
+                        open: stack.stack.last().unwrap().begin_span,
+                        close: span,
+                    });
                 }
             }
             TokenTree::Symbol(')') => {
-                if let PartialEnvironment::MathMode { display, dollars } =
+                if let PartialEnvironment::MathMode { display } =
                     stack.stack.last().unwrap().environment
                 {
-                    if display || dollars {
-                        return Err(BlockError::MismatchedMathDelimiters);
+                    if display {
+                        return Err(BlockError::MismatchedMathDelimiters {
+                            src: NamedSource::new(src_name, src.to_owned()),
+                            open: stack.stack.last().unwrap().begin_span,
+                            close: span,
+                        });
                     }
                     stack.end_math(span)?;
                 } else {
-                    return Err(BlockError::MismatchedMathDelimiters);
+                    return Err(BlockError::MismatchedMathDelimiters {
+                        src: NamedSource::new(src_name, src.to_owned()),
+                        open: stack.stack.last().unwrap().begin_span,
+                        close: span,
+                    });
                 }
             }
             TokenTree::Symbol(symbol) => stack.push(span, TokenBlock::Symbol(symbol)),
@@ -359,7 +325,7 @@ pub fn trees_to_blocks(
             TokenTree::Block(block) => {
                 stack.push(
                     span,
-                    TokenBlock::Block(trees_to_blocks(_src, _src_name, block)?),
+                    TokenBlock::Block(trees_to_blocks(src, src_name, block)?),
                 );
             }
         }

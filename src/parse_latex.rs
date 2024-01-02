@@ -156,6 +156,11 @@ impl TokenTree {
             _ => self,
         }
     }
+
+    /// Converts a string to a vector of `Char` token trees.
+    pub fn from_str(s: &str) -> Vec<Self> {
+        s.chars().map(Self::Char).collect()
+    }
 }
 
 fn to_trees(tokens: Vec<(SourceSpan, Token)>) -> Result<Vec<(SourceSpan, TokenTree)>, ParseError> {
