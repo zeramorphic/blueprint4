@@ -3,7 +3,7 @@ use std::iter::Peekable;
 use miette::{Diagnostic, NamedSource, SourceSpan};
 use thiserror::Error;
 
-use crate::{bluecode::*, parse_latex::TokenBlock};
+use crate::{bluecode::*, latex_token_blocks::TokenBlock};
 
 pub fn latex_to_bluecode(
     src: &str,
@@ -14,7 +14,15 @@ pub fn latex_to_bluecode(
     let mut items = Vec::new();
     let mut errors = Vec::new();
 
+    let mut previous_span = None;
     while iter.peek().is_some() {
+        // If we consumed no token blocks, consume one anyway.
+        let span = iter.peek().unwrap().0;
+        if previous_span == Some(span) {
+            iter.next();
+        }
+        previous_span = Some(span);
+
         match parse_item(src, src_name, &mut iter) {
             Ok(item) => items.push(item),
             Err(more_errors) => errors.extend(more_errors),
@@ -30,7 +38,7 @@ pub fn latex_to_bluecode(
 
 #[derive(Error, Debug, Diagnostic)]
 pub enum ConvertError {
-    #[error("unknown command")]
+    #[error("(bug) unknown command")]
     UnknownCommand {
         #[source_code]
         src: NamedSource,

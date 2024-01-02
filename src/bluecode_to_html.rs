@@ -29,12 +29,11 @@ fn convert_header(header: &Header) -> String {
 
 fn convert_paragraph(paragraph: &Paragraph) -> String {
     match paragraph {
-        Paragraph::Text(spans) => spans
-            .iter()
-            .map(convert_span)
-            .chain(std::iter::once("\n".to_owned()))
-            .collect(),
-        Paragraph::DisplayMath(math) => format!("\\[ {} \\]\n", math.content),
+        Paragraph::Text(spans) => format!(
+            "<p>{}</p>\n",
+            spans.iter().map(convert_span).collect::<String>()
+        ),
+        Paragraph::DisplayMath(math) => format!("<p>\\[ {} \\]</p>\n", math.content),
     }
 }
 

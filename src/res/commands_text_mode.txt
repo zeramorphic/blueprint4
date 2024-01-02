@@ -1,0 +1,18 @@
+part
+chapter
+section
+subsection
+subsubsection
+paragraph
+subparagraph
+
+label
+ref
+uses
+
+lean
+leanok
+
+# For now, let's ignore \begin and \end.
+begin
+end

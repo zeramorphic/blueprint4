@@ -1,0 +1,26 @@
+# For now, we'll just fill this file with some "known good" macros.
+leq
+geq
+to
+ldots
+left
+right
+lvert
+rvert
+sum
+dots
+epsilon
+in
+cdots
+binom
+frac
+subseteq
+tfrac
+mu
+ast
+tau
+infty
+eta
+min
+lceil
+rceil
