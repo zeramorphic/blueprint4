@@ -2,13 +2,13 @@
 
 #[derive(Debug)]
 pub enum Item {
-    Header(Header),
+    Section(Section),
     Paragraph(Paragraph),
     Theorem(Theorem),
 }
 
 #[derive(Debug)]
-pub struct Header {
+pub struct Section {
     pub name: String,
     /// The header level. In LaTeX, these are:
     ///
@@ -22,6 +22,9 @@ pub struct Header {
     /// | 4      | paragraph     |
     /// | 5      | subparagraph  |
     pub level: i32,
+    pub numbered: bool,
+    pub label: Option<String>,
+    pub contents: Vec<Item>,
 }
 
 #[derive(Debug)]
@@ -33,32 +36,13 @@ pub enum Paragraph {
 #[derive(Debug)]
 pub enum Span {
     Text(String),
-    Label(Label),
     Reference(Reference),
-    LeanLink(LeanLink),
-    Uses(Uses),
-    LeanOk,
     InlineMath(Mathematics),
-}
-
-#[derive(Debug)]
-pub struct Label {
-    pub name: String,
 }
 
 #[derive(Debug)]
 pub struct Reference {
     pub name: String,
-}
-
-#[derive(Debug)]
-pub struct LeanLink {
-    pub lean_name: String,
-}
-
-#[derive(Debug)]
-pub struct Uses {
-    pub uses: Vec<String>,
 }
 
 #[derive(Debug)]
@@ -74,6 +58,10 @@ pub struct Mathematics {
 pub struct Theorem {
     /// The kind of theorem.
     pub kind: String,
+    pub label: Option<String>,
+    pub lean_name: String,
+    pub uses: Vec<String>,
+    pub proven: bool,
     /// The contents of the theorem.
     pub paragraphs: Vec<Paragraph>,
 }
