@@ -1186,8 +1186,9 @@ impl<'a> State<'a> {
         args: Arguments,
     ) -> Result<(), ExpandError> {
         let result = self.replace_parameters(span, body, &args.args)?;
-        self.output
-            .extend(result.into_iter().map(|tree| (span, tree)));
+        for tree in result.into_iter().rev() {
+            self.input.push_front((span, tree));
+        }
         Ok(())
     }
 

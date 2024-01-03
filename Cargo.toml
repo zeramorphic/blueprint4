@@ -6,5 +6,7 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
+askama = "0.12.1"
 miette = { version = "5.10.0", features = ["fancy"] }
+quick-xml = "0.31.0"
 thiserror = "1.0.52"

@@ -3,7 +3,7 @@
 #[macro_export]
 macro_rules! resource {
     ($name:literal) => {
-        include_str!(concat!("res/", $name))
+        include_str!(concat!("../res/", $name))
             .lines()
             .filter(|line| !line.trim().is_empty() && !line.starts_with("# "))
             .collect::<Vec<&'static str>>()

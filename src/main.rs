@@ -1,4 +1,7 @@
+use std::fs::File;
+
 mod bluecode;
+mod bluecode_to_html;
 mod expand_latex;
 mod latex_sections;
 mod latex_to_bluecode;
@@ -26,8 +29,10 @@ fn main() {
                     Ok(blocks) => match latex_sections::process_sections(&src, &src_name, blocks) {
                         Ok(section) => {
                             match latex_to_bluecode::latex_to_bluecode(&src, &src_name, section) {
-                                Ok(items) => {
-                                    println!("{items:#?}");
+                                Ok(document) => {
+                                    let mut file = File::create("test/LeanAPAP/ap.html").unwrap();
+                                    bluecode_to_html::bluecode_to_html(&document, &mut file)
+                                        .unwrap();
                                 }
                                 Err(errors) => {
                                     for error in errors {

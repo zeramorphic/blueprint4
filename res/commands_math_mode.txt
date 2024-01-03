@@ -29,3 +29,8 @@ rceil
 |
 \
 #
+mathbb
+lVert
+rVert
+mathcal
+vec
