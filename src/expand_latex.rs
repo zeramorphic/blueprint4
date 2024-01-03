@@ -588,8 +588,6 @@ impl<'a> State<'a> {
         while let Some((span, tree)) = self.input.pop_front() {
             if let Err(err) = self.process_input(span, tree) {
                 errors.extend(err);
-                // TODO: Remove this break
-                break;
             }
         }
 
@@ -1048,9 +1046,21 @@ impl<'a> State<'a> {
     ) -> Result<Box<dyn Any>, ExpandError> {
         match action {
             EnvironmentAction::Theorem { kind } => {
+                // We will output all theorems as `theorem` environments, and add a `\theoremkind` command stating what kind of theorem this is.
                 let (_, [_name]) = args.into_array()?;
                 self.output
                     .push((span, TokenTree::Named("begin".to_owned())));
+                self.output.push((
+                    span,
+                    TokenTree::Block(
+                        TokenTree::from_str("theorem")
+                            .into_iter()
+                            .map(|tree| (span, tree))
+                            .collect(),
+                    ),
+                ));
+                self.output
+                    .push((span, TokenTree::Named("theoremkind".to_owned())));
                 self.output.push((
                     span,
                     TokenTree::Block(
@@ -1130,7 +1140,7 @@ impl<'a> State<'a> {
                 self.output.push((
                     span,
                     TokenTree::Block(
-                        TokenTree::from_str(&kind)
+                        TokenTree::from_str("theorem")
                             .into_iter()
                             .map(|tree| (span, tree))
                             .collect(),

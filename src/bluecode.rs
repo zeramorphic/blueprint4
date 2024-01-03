@@ -1,5 +1,7 @@
 //! A format for blueprint code, independent of the source material (e.g. LaTeX/Markdown).
 
+use std::collections::VecDeque;
+
 #[derive(Debug)]
 pub enum Item {
     Section(Section),
@@ -29,15 +31,54 @@ pub struct Section {
 
 #[derive(Debug)]
 pub enum Paragraph {
-    Text(Vec<Span>),
+    Text(Span),
     DisplayMath(Mathematics),
 }
 
 #[derive(Debug)]
 pub enum Span {
+    Concatenate(Vec<Span>),
     Text(String),
     Reference(Reference),
     InlineMath(Mathematics),
+}
+
+impl Span {
+    pub fn normalise(self) -> Span {
+        match self {
+            Span::Concatenate(spans) => {
+                let mut spans = VecDeque::from(spans);
+                let mut output = Vec::<Span>::new();
+
+                while let Some(span) = spans.pop_front() {
+                    match span {
+                        Span::Concatenate(inner_spans) => {
+                            // Flatten inner concatenations.
+                            for span in inner_spans.into_iter().rev() {
+                                spans.push_front(span);
+                            }
+                        }
+                        Span::Text(text) => {
+                            if let Some(Span::Text(previous_text)) = output.last_mut() {
+                                // Merge consecutive text spans.
+                                *previous_text += &text;
+                            } else {
+                                output.push(Span::Text(text));
+                            }
+                        }
+                        _ => output.push(span),
+                    }
+                }
+
+                if output.len() == 1 {
+                    output.pop().unwrap()
+                } else {
+                    Span::Concatenate(output)
+                }
+            }
+            _ => self,
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -59,9 +100,9 @@ pub struct Theorem {
     /// The kind of theorem.
     pub kind: String,
     pub label: Option<String>,
-    pub lean_name: String,
+    pub lean_name: Option<String>,
     pub uses: Vec<String>,
     pub proven: bool,
     /// The contents of the theorem.
-    pub paragraphs: Vec<Paragraph>,
+    pub contents: Vec<Paragraph>,
 }
