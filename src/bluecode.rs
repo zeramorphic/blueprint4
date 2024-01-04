@@ -274,8 +274,8 @@ pub struct Mathematics {
 /// A definition, theorem, or proof.
 #[derive(Debug)]
 pub struct Theorem {
-    /// The kind of theorem.
-    pub kind: String,
+    pub display_name_upper: String,
+    pub display_name_lower: String,
     pub label: Option<String>,
     pub lean_name: Option<String>,
     pub uses: Vec<String>,

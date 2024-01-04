@@ -121,6 +121,8 @@ struct DefinedCommands {
     commands: BTreeMap<String, Command>,
     /// The set of defined environments, sorted alphabetically and indexed by name.
     environments: BTreeMap<String, Environment>,
+    /// The set of defined theorem kinds, sorted alphabetically and indexed by LaTeX name.
+    theorem_kinds: BTreeMap<String, TheoremKind>,
 }
 
 impl Default for DefinedCommands {
@@ -136,6 +138,7 @@ impl Default for DefinedCommands {
                 .collect(),
             commands: BTreeMap::new(),
             environments: BTreeMap::new(),
+            theorem_kinds: BTreeMap::new(),
         };
 
         output
@@ -298,20 +301,24 @@ impl Default for DefinedCommands {
             )
             .unwrap();
 
-        for kind in ["lemma", "theorem", "proof"] {
-            output
-                .new_environment(
-                    NewCommandBehaviour::New,
-                    kind.to_owned(),
-                    CallingConvention {
-                        star: false,
-                        params: vec![Parameter::Optional(Vec::new())],
-                    },
-                    EnvironmentAction::Theorem {
-                        kind: kind.to_owned(),
-                    },
-                )
-                .unwrap();
+        for kind in [
+            TheoremKind {
+                latex_name: "lemma".to_owned(),
+                display_name_upper: "Lemma".to_owned(),
+                display_name_lower: "lemma".to_owned(),
+            },
+            TheoremKind {
+                latex_name: "theorem".to_owned(),
+                display_name_upper: "Theorem".to_owned(),
+                display_name_lower: "theorem".to_owned(),
+            },
+            TheoremKind {
+                latex_name: "proof".to_owned(),
+                display_name_upper: "Proof".to_owned(),
+                display_name_lower: "proof".to_owned(),
+            },
+        ] {
+            output.new_theorem(NewCommandBehaviour::New, kind).unwrap();
         }
 
         for environment in resource!("environments_math_mode.txt") {
@@ -396,6 +403,24 @@ impl DefinedCommands {
             },
         }
     }
+
+    pub fn new_theorem(
+        &mut self,
+        behaviour: NewCommandBehaviour,
+        kind: TheoremKind,
+    ) -> Result<(), ExpandError> {
+        self.theorem_kinds
+            .insert(kind.latex_name.to_owned(), kind.clone());
+        self.new_environment(
+            behaviour,
+            kind.latex_name.to_owned(),
+            CallingConvention {
+                star: false,
+                params: vec![Parameter::Optional(Vec::new())],
+            },
+            EnvironmentAction::Theorem { kind },
+        )
+    }
 }
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
@@ -418,6 +443,16 @@ struct Command {
 struct Environment {
     call_conv: CallingConvention,
     action: EnvironmentAction,
+}
+
+#[derive(Debug, Clone)]
+struct TheoremKind {
+    /// Something like `lemma`.
+    latex_name: String,
+    /// Something like `Lemma`.
+    display_name_upper: String,
+    /// Something like `lemma`.
+    display_name_lower: String,
 }
 
 /// The calling convention for a command.
@@ -480,7 +515,7 @@ enum CommandAction {
 #[derive(Debug, Clone)]
 enum EnvironmentAction {
     /// An `amsthm` theorem or proof, possibly with a name.
-    Theorem { kind: String },
+    Theorem { kind: TheoremKind },
     /// If we see this environment, pass it through unedited, but make sure we're in display math mode.
     EnsureMath { name: String },
 }
@@ -1046,7 +1081,7 @@ impl<'a> State<'a> {
     ) -> Result<Box<dyn Any>, ExpandError> {
         match action {
             EnvironmentAction::Theorem { kind } => {
-                // We will output all theorems as `theorem` environments, and add a `\theoremkind` command stating what kind of theorem this is.
+                // We will output all theorems as `theorem` environments, and add `\theoremname` commands stating what kind of theorem this is.
                 let (_, [_name]) = args.into_array()?;
                 self.output
                     .push((span, TokenTree::Named("begin".to_owned())));
@@ -1060,11 +1095,22 @@ impl<'a> State<'a> {
                     ),
                 ));
                 self.output
-                    .push((span, TokenTree::Named("theoremkind".to_owned())));
+                    .push((span, TokenTree::Named("theoremnameupper".to_owned())));
                 self.output.push((
                     span,
                     TokenTree::Block(
-                        TokenTree::from_str(&kind)
+                        TokenTree::from_str(&kind.display_name_upper)
+                            .into_iter()
+                            .map(|tree| (span, tree))
+                            .collect(),
+                    ),
+                ));
+                self.output
+                    .push((span, TokenTree::Named("theoremnamelower".to_owned())));
+                self.output.push((
+                    span,
+                    TokenTree::Block(
+                        TokenTree::from_str(&kind.display_name_lower)
                             .into_iter()
                             .map(|tree| (span, tree))
                             .collect(),

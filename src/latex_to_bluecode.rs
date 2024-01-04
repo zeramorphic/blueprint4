@@ -116,11 +116,21 @@ impl<'a> Container<'a> {
         }
     }
 
-    pub fn set_theorem_kind(&mut self, kind: String) -> Result<(), ConvertError> {
+    pub fn set_theorem_name_upper(&mut self, name: String) -> Result<(), ConvertError> {
         match self {
             Container::Section(_) => todo!(),
             Container::Theorem(theorem) => {
-                theorem.kind = kind;
+                theorem.display_name_upper = name;
+                Ok(())
+            }
+        }
+    }
+
+    pub fn set_theorem_name_lower(&mut self, name: String) -> Result<(), ConvertError> {
+        match self {
+            Container::Section(_) => todo!(),
+            Container::Theorem(theorem) => {
+                theorem.display_name_lower = name;
                 Ok(())
             }
         }
@@ -200,8 +210,11 @@ fn convert_text(
             "label" => container
                 .set_label(process_string_block(iter)?)
                 .map_err(|err| vec![err]),
-            "theoremkind" => container
-                .set_theorem_kind(process_string_block(iter)?)
+            "theoremnameupper" => container
+                .set_theorem_name_upper(process_string_block(iter)?)
+                .map_err(|err| vec![err]),
+            "theoremnamelower" => container
+                .set_theorem_name_lower(process_string_block(iter)?)
                 .map_err(|err| vec![err]),
             "lean" => container
                 .set_lean_name(process_string_block(iter)?)
@@ -228,7 +241,8 @@ fn convert_text(
         )) => match environment.as_str() {
             "theorem" => {
                 let mut theorem = Theorem {
-                    kind: "<theorem>".to_owned(),
+                    display_name_upper: "<Theorem>".to_owned(),
+                    display_name_lower: "<theorem>".to_owned(),
                     label: None,
                     lean_name: None,
                     uses: Vec::new(),

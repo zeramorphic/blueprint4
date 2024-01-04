@@ -52,6 +52,18 @@ fn write_head(writer: &mut Writer<impl Write>) -> Result<(), Error> {
         }
     }
 
+    writer
+        .create_element("style")
+        .write_text_content(BytesText::from_escaped(include_str!(
+            "../templates/normalize.css"
+        )))?;
+
+    writer
+        .create_element("style")
+        .write_text_content(BytesText::from_escaped(include_str!(
+            "../templates/styles.css"
+        )))?;
+
     Ok(())
 }
 
@@ -92,9 +104,29 @@ fn write_theorem(theorem: &Theorem, writer: &mut Writer<impl Write>) -> Result<(
         .create_element("div")
         .with_attribute(("class", "theorem"))
         .write_inner_content::<_, Error>(|writer| {
-            for paragraph in &theorem.contents {
-                write_paragraph(paragraph, writer)?;
-            }
+            writer
+                .create_element("div")
+                .with_attribute(("class", "theorem-heading"))
+                .write_inner_content::<_, Error>(|writer| {
+                    writer
+                        .create_element("span")
+                        .with_attribute(("class", "theorem-kind"))
+                        .write_text_content(BytesText::new(&format!(
+                            "{}.",
+                            theorem.display_name_upper
+                        )))?;
+                    Ok(())
+                })?;
+
+            writer
+                .create_element("div")
+                .with_attribute(("class", "theorem-content"))
+                .write_inner_content::<_, Error>(|writer| {
+                    for paragraph in &theorem.contents {
+                        write_paragraph(paragraph, writer)?;
+                    }
+                    Ok(())
+                })?;
             Ok(())
         })?;
     Ok(())
@@ -115,14 +147,16 @@ fn write_paragraph(paragraph: &Paragraph, writer: &mut Writer<impl Write>) -> Re
             .create_element("p")
             .write_inner_content(|writer| write_span(span, writer))
             .map(|_| ()),
-        Paragraph::DisplayMath(math) => {
-            writer.write_indent()?;
-            writer.write_event(Event::Text(BytesText::new(&format!(
-                "\\[{}\\]",
-                math.content
-            ))))?;
-            writer.write_indent()
-        }
+        Paragraph::DisplayMath(math) => writer
+            .create_element("div")
+            .with_attribute(("class", "display-math"))
+            .write_inner_content(|writer| {
+                writer.write_event(Event::Text(BytesText::new(&format!(
+                    "\\[{}\\]",
+                    math.content
+                ))))
+            })
+            .map(|_| ()),
     }
 }
 
