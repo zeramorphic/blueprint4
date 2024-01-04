@@ -12,7 +12,7 @@ pub fn latex_to_bluecode(
 ) -> Result<Section, Vec<ConvertError>> {
     let section = convert_section(src, src_name, section)?;
     // TODO: Check for things like links with incorrect targets.
-    Ok(section)
+    Ok(section.split_newlines())
 }
 
 #[derive(Error, Debug, Diagnostic)]
@@ -293,7 +293,7 @@ fn convert_span(
     if spans.is_empty() {
         Ok(None)
     } else {
-        Ok(Some(Span::Concatenate(spans).normalise()))
+        Ok(Some(Span::Concatenate(spans)))
     }
 }
 
