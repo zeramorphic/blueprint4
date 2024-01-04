@@ -111,10 +111,18 @@ fn write_theorem(theorem: &Theorem, writer: &mut Writer<impl Write>) -> Result<(
                     writer
                         .create_element("span")
                         .with_attribute(("class", "theorem-kind"))
-                        .write_text_content(BytesText::new(&format!(
-                            "{}.",
-                            theorem.display_name_upper
-                        )))?;
+                        .write_text_content(BytesText::new(&theorem.display_name_upper))?;
+                    if let Some(name) = &theorem.name {
+                        writer
+                            .create_element("span")
+                            .with_attribute(("class", "theorem-name"))
+                            .write_inner_content::<_, Error>(|writer| {
+                                writer.write_event(Event::Text(BytesText::new(" (")))?;
+                                write_span(name, writer)?;
+                                writer.write_event(Event::Text(BytesText::new(")")))?;
+                                Ok(())
+                            })?;
+                    }
                     Ok(())
                 })?;
 
@@ -134,15 +142,6 @@ fn write_theorem(theorem: &Theorem, writer: &mut Writer<impl Write>) -> Result<(
 
 fn write_paragraph(paragraph: &Paragraph, writer: &mut Writer<impl Write>) -> Result<(), Error> {
     match paragraph {
-        Paragraph::Text(Span::Concatenate(spans)) => writer
-            .create_element("p")
-            .write_inner_content::<_, Error>(|writer| {
-                for span in spans {
-                    write_span(span, writer)?;
-                }
-                Ok(())
-            })
-            .map(|_| ()),
         Paragraph::Text(span) => writer
             .create_element("p")
             .write_inner_content(|writer| write_span(span, writer))
@@ -162,7 +161,12 @@ fn write_paragraph(paragraph: &Paragraph, writer: &mut Writer<impl Write>) -> Re
 
 fn write_span(span: &Span, writer: &mut Writer<impl Write>) -> Result<(), Error> {
     match span {
-        Span::Concatenate(_) => todo!(),
+        Span::Concatenate(spans) => {
+            for span in spans {
+                write_span(span, writer)?;
+            }
+            Ok(())
+        }
         Span::Text(text) => writer.write_event(Event::Text(BytesText::new(text))),
         Span::Reference(reference) => writer
             .create_element("i")

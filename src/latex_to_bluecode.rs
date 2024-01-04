@@ -116,7 +116,7 @@ impl<'a> Container<'a> {
         }
     }
 
-    pub fn set_theorem_name_upper(&mut self, name: String) -> Result<(), ConvertError> {
+    pub fn set_theorem_kind_name_upper(&mut self, name: String) -> Result<(), ConvertError> {
         match self {
             Container::Section(_) => todo!(),
             Container::Theorem(theorem) => {
@@ -126,11 +126,21 @@ impl<'a> Container<'a> {
         }
     }
 
-    pub fn set_theorem_name_lower(&mut self, name: String) -> Result<(), ConvertError> {
+    pub fn set_theorem_kind_name_lower(&mut self, name: String) -> Result<(), ConvertError> {
         match self {
             Container::Section(_) => todo!(),
             Container::Theorem(theorem) => {
                 theorem.display_name_lower = name;
+                Ok(())
+            }
+        }
+    }
+
+    pub fn set_theorem_name(&mut self, name: Span) -> Result<(), ConvertError> {
+        match self {
+            Container::Section(_) => todo!(),
+            Container::Theorem(theorem) => {
+                theorem.name = Some(name);
                 Ok(())
             }
         }
@@ -210,11 +220,14 @@ fn convert_text(
             "label" => container
                 .set_label(process_string_block(iter)?)
                 .map_err(|err| vec![err]),
-            "theoremnameupper" => container
-                .set_theorem_name_upper(process_string_block(iter)?)
+            "theoremkindupper" => container
+                .set_theorem_kind_name_upper(process_string_block(iter)?)
                 .map_err(|err| vec![err]),
-            "theoremnamelower" => container
-                .set_theorem_name_lower(process_string_block(iter)?)
+            "theoremkindlower" => container
+                .set_theorem_kind_name_lower(process_string_block(iter)?)
+                .map_err(|err| vec![err]),
+            "theoremname" => container
+                .set_theorem_name(process_span_block(src, src_name, iter)?)
                 .map_err(|err| vec![err]),
             "lean" => container
                 .set_lean_name(process_string_block(iter)?)
@@ -243,6 +256,7 @@ fn convert_text(
                 let mut theorem = Theorem {
                     display_name_upper: "<Theorem>".to_owned(),
                     display_name_lower: "<theorem>".to_owned(),
+                    name: None,
                     label: None,
                     lean_name: None,
                     uses: Vec::new(),
@@ -328,6 +342,23 @@ fn process_string_block(
 ) -> Result<String, Vec<ConvertError>> {
     match iter.next() {
         Some((_, TokenBlock::Block(tokens))) => process_string(tokens),
+        _ => Err(vec![ConvertError::ExpectedText]),
+    }
+}
+
+fn process_span_block(
+    src: &str,
+    src_name: &str,
+    iter: &mut Peekable<impl Iterator<Item = (SourceSpan, TokenBlock)>>,
+) -> Result<Span, Vec<ConvertError>> {
+    match iter.next() {
+        Some((_, TokenBlock::Block(tokens))) => {
+            let mut iter = tokens.into_iter().peekable();
+            match convert_span(src, src_name, &mut iter)? {
+                Some(span) => Ok(span),
+                None => todo!(),
+            }
+        }
         _ => Err(vec![ConvertError::ExpectedText]),
     }
 }

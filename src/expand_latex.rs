@@ -67,7 +67,12 @@ pub enum ExpandError {
         close_delimiter: &'static str,
     },
     #[error("expected text")]
-    ExpectedText,
+    ExpectedText {
+        #[source_code]
+        src: NamedSource,
+        #[label("expected a text parameter to this command")]
+        span: SourceSpan,
+    },
     #[error("found \\begin and \\end with mismatched environments")]
     MismatchedBeginEnd {
         #[source_code]
@@ -861,9 +866,7 @@ impl<'a> State<'a> {
                     },
                 )
                 .map_err(|err| vec![err]),
-            CommandAction::BeginEnvironment => {
-                self.process_begin(span, args).map_err(|err| vec![err])
-            }
+            CommandAction::BeginEnvironment => self.process_begin(span, args),
             CommandAction::EndEnvironment => self.process_end(span, args).map_err(|err| vec![err]),
             CommandAction::UserDefined { body } => self
                 .process_user_macro(span, body, args)
@@ -889,13 +892,17 @@ impl<'a> State<'a> {
 
     fn process_string(
         &mut self,
+        span: SourceSpan,
         tokens: Vec<(SourceSpan, TokenTree)>,
     ) -> Result<String, ExpandError> {
         if tokens
             .iter()
             .any(|(_, tree)| !matches!(tree, TokenTree::Char(_)))
         {
-            return Err(ExpandError::ExpectedText);
+            return Err(ExpandError::ExpectedText {
+                src: self.src(),
+                span,
+            });
         }
 
         Ok(tokens.iter().map(|(_, tree)| tree.to_string()).collect())
@@ -979,7 +986,7 @@ impl<'a> State<'a> {
         let (_, [body]) = args.into_array().map_err(|err| vec![err])?;
         let processed_body = self.process_inner(body.into())?;
         let mut result = self
-            .process_string(processed_body)
+            .process_string(span, processed_body)
             .map_err(|err| vec![err])?;
         result.push(combining_character);
 
@@ -1047,14 +1054,18 @@ impl<'a> State<'a> {
         }
     }
 
-    fn process_begin(&mut self, span: SourceSpan, args: Arguments) -> Result<(), ExpandError> {
-        let (_, [env_name]) = args.into_array()?;
-        let env_name = self.process_string(env_name)?;
+    fn process_begin(&mut self, span: SourceSpan, args: Arguments) -> Result<(), Vec<ExpandError>> {
+        let (_, [env_name]) = args.into_array().map_err(|err| vec![err])?;
+        let env_name = self
+            .process_string(span, env_name)
+            .map_err(|err| vec![err])?;
 
         match self.commands.environments.get(&env_name) {
             Some(environment) => {
                 let environment = environment.clone();
-                let args = self.process_calling_convention(span, environment.call_conv.clone())?;
+                let args = self
+                    .process_calling_convention(span, environment.call_conv.clone())
+                    .map_err(|err| vec![err])?;
                 let data = self.begin_environment(span, args, environment.action.clone())?;
                 self.environments.push(ActiveEnvironment {
                     span,
@@ -1064,10 +1075,10 @@ impl<'a> State<'a> {
                 });
                 Ok(())
             }
-            None => Err(ExpandError::UnknownEnvironment {
+            None => Err(vec![ExpandError::UnknownEnvironment {
                 src: self.src(),
                 span,
-            }),
+            }]),
         }
     }
 
@@ -1078,11 +1089,12 @@ impl<'a> State<'a> {
         span: SourceSpan,
         args: Arguments,
         action: EnvironmentAction,
-    ) -> Result<Box<dyn Any>, ExpandError> {
+    ) -> Result<Box<dyn Any>, Vec<ExpandError>> {
         match action {
             EnvironmentAction::Theorem { kind } => {
                 // We will output all theorems as `theorem` environments, and add `\theoremname` commands stating what kind of theorem this is.
-                let (_, [_name]) = args.into_array()?;
+                let (_, [name]) = args.into_array().map_err(|err| vec![err])?;
+
                 self.output
                     .push((span, TokenTree::Named("begin".to_owned())));
                 self.output.push((
@@ -1095,7 +1107,7 @@ impl<'a> State<'a> {
                     ),
                 ));
                 self.output
-                    .push((span, TokenTree::Named("theoremnameupper".to_owned())));
+                    .push((span, TokenTree::Named("theoremkindupper".to_owned())));
                 self.output.push((
                     span,
                     TokenTree::Block(
@@ -1106,7 +1118,7 @@ impl<'a> State<'a> {
                     ),
                 ));
                 self.output
-                    .push((span, TokenTree::Named("theoremnamelower".to_owned())));
+                    .push((span, TokenTree::Named("theoremkindlower".to_owned())));
                 self.output.push((
                     span,
                     TokenTree::Block(
@@ -1116,6 +1128,14 @@ impl<'a> State<'a> {
                             .collect(),
                     ),
                 ));
+
+                if !name.is_empty() {
+                    let name = self.process_inner(name.into())?;
+                    self.output
+                        .push((span, TokenTree::Named("theoremname".to_owned())));
+                    self.output.push((span, TokenTree::Block(name)));
+                }
+
                 Ok(Box::new(()))
             }
             EnvironmentAction::EnsureMath { name } => {
@@ -1130,7 +1150,8 @@ impl<'a> State<'a> {
                             display: true,
                             dollars: false,
                         },
-                    )?;
+                    )
+                    .map_err(|err| vec![err])?;
                 }
 
                 self.output
@@ -1152,7 +1173,7 @@ impl<'a> State<'a> {
 
     fn process_end(&mut self, span: SourceSpan, args: Arguments) -> Result<(), ExpandError> {
         let (_, [env_name]) = args.into_array()?;
-        let env_name = self.process_string(env_name)?;
+        let env_name = self.process_string(span, env_name)?;
 
         match self.environments.pop() {
             Some(active_env) => {

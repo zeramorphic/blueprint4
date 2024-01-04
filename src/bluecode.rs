@@ -276,6 +276,7 @@ pub struct Mathematics {
 pub struct Theorem {
     pub display_name_upper: String,
     pub display_name_lower: String,
+    pub name: Option<Span>,
     pub label: Option<String>,
     pub lean_name: Option<String>,
     pub uses: Vec<String>,
